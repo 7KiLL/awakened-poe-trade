@@ -4,6 +4,7 @@ import { OverlayController, OVERLAY_WINDOW_OPTS } from 'electron-overlay-window'
 import type { ServerEvents } from '../server'
 import type { Logger } from '../RemoteLogger'
 import type { GameWindow } from './GameWindow'
+import { layerHost } from './LayerHost'
 
 export class OverlayWindow {
   public isInteractable = false
@@ -25,7 +26,7 @@ export class OverlayWindow {
       this.wasUsedRecently = e.isOverlay
     })
 
-    if (process.argv.includes('--no-overlay')) return
+    if (process.argv.includes('--no-overlay') || layerHost) return
 
     this.window = new BrowserWindow({
       icon: path.join(__dirname, process.env.STATIC!, 'icon.png'),
@@ -59,6 +60,7 @@ export class OverlayWindow {
   loadAppPage (port: number) {
     const url = process.env.VITE_DEV_SERVER_URL ||
       `http://localhost:${port}/index.html`
+    if (layerHost) return layerHost.start(url, this, this.poeWindow)
 
     if (!this.window) {
       shell.openExternal(url)
@@ -76,7 +78,7 @@ export class OverlayWindow {
   assertOverlayActive = () => {
     if (!this.isInteractable) {
       this.isInteractable = true
-      OverlayController.activateOverlay()
+      layerHost ? layerHost.sync() : OverlayController.activateOverlay()
       this.poeWindow.isActive = false
     }
   }
@@ -84,7 +86,7 @@ export class OverlayWindow {
   assertGameActive = () => {
     if (this.isInteractable) {
       this.isInteractable = false
-      OverlayController.focusTarget()
+      layerHost ? layerHost.sync() : OverlayController.focusTarget()
       this.poeWindow.isActive = true
     }
   }
@@ -100,6 +102,7 @@ export class OverlayWindow {
 
   updateOpts (overlayKey: string, windowTitle: string) {
     this.overlayKey = overlayKey
+    layerHost?.setOverlayKey(overlayKey)
     this.poeWindow.attach(this.window, windowTitle)
   }
 

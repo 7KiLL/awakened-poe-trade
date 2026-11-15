@@ -30,7 +30,7 @@ export default defineComponent({
     return {
       t,
       builtin: computed(() => {
-        if (!Host.isElectron) return false
+        if (!Host.isElectron || navigator.userAgent.includes('LayerHost')) return false
         const priceCheck = AppConfig('price-check') as PriceCheckWidget
         return priceCheck.builtinBrowser
       }),
