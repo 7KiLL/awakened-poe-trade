@@ -2,6 +2,7 @@ import { Rectangle, Point, screen } from 'electron'
 import { uIOhook, UiohookMouseEvent } from 'uiohook-napi'
 import type { OverlayWindow } from './OverlayWindow'
 import type { ServerEvents } from '../server'
+import { layerHost } from './LayerHost'
 
 export class WidgetAreaTracker {
   private holdKey!: string
@@ -26,9 +27,10 @@ export class WidgetAreaTracker {
           height: Math.round(opts.area.height)
         })
       } else {
-        this.closeThreshold = opts.closeThreshold
-        this.from = opts.from
-        this.area = opts.area
+        const from = layerHost?.overlayToScreen({ ...opts.from, width: opts.closeThreshold, height: 0 })
+        this.closeThreshold = from?.width ?? opts.closeThreshold
+        this.from = from ?? opts.from
+        this.area = layerHost?.overlayToScreen(opts.area) ?? opts.area
       }
 
       this.removeListeners()
