@@ -3,6 +3,7 @@ import { uIOhook, UiohookKey, UiohookWheelEvent } from 'uiohook-napi'
 import { isModKey, KeyToElectron, mergeTwoHotkeys } from '../../../ipc/KeyToCode'
 import { typeInChat, stashSearch } from './text-box'
 import { WidgetAreaTracker } from '../windowing/WidgetAreaTracker'
+import { layerHost } from '../windowing/LayerHost'
 import { HostClipboard } from './HostClipboard'
 import { OcrWorker } from '../vision/link-main'
 import type { ShortcutAction } from '../../../ipc/types'
@@ -156,7 +157,7 @@ export class Shortcuts {
         } else if (entry.action.type === 'copy-item') {
           const { action } = entry
 
-          const pressPosition = screen.getCursorScreenPoint()
+          const pressPosition = layerHost?.screenToOverlay(screen.getCursorScreenPoint()) ?? screen.getCursorScreenPoint()
 
           this.clipboard.readItemText()
             .then(clipboard => {
