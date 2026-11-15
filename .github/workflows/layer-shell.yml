@@ -1,0 +1,112 @@
+# Keeps this branch at "latest upstream release + the layer-shell commits" and
+# publishes an AppImage for it. Upstream's own workflow (main.yml) only runs on
+# master, which this fork never pushes to.
+name: Layer-shell release
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [wayland-layer-shell]
+    paths-ignore: ['.github/**']
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency: layer-shell-release
+
+env:
+  UPSTREAM: https://github.com/SnosMe/awakened-poe-trade.git
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        fetch-depth: 0
+        # The default token may not push commits that touch .github/workflows.
+        # If upstream changes theirs, add a SYNC_TOKEN secret (PAT, repo + workflow).
+        token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+    - name: Rebase onto the latest upstream release
+      id: sync
+      run: |
+        git config user.name 'github-actions[bot]'
+        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+        tag=$(git ls-remote --tags --refs "$UPSTREAM" 'v*' | sed 's|.*refs/tags/||' \
+          | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+        git fetch --no-tags "$UPSTREAM" "+refs/heads/master:refs/remotes/upstream/master" "+refs/tags/$tag:refs/tags/$tag"
+
+        if ! git merge-base --is-ancestor "$tag" HEAD; then
+          git rebase --onto "$tag" "$(git merge-base HEAD upstream/master)"
+        fi
+
+        # Release when the code differs from our last release of this upstream version.
+        upstream=${tag#v}
+        last=$(git tag -l "v$upstream-layer.*" | sort -V | tail -1)
+        if [ -n "$last" ] && git diff --quiet "$last" HEAD -- . ':!.github'; then
+          echo "Nothing new since $last"
+          exit 0
+        fi
+        count=$(git tag -l "v$upstream-layer.*" | wc -l)
+        echo "upstream=$upstream" >> "$GITHUB_OUTPUT"
+        echo "version=$upstream-layer.$((count + 1))" >> "$GITHUB_OUTPUT"
+
+    - uses: actions/setup-node@v6
+      if: steps.sync.outputs.version
+
+    - name: Build renderer
+      if: steps.sync.outputs.version
+      working-directory: ./renderer
+      run: |
+        npm ci
+        npm run lint
+        npm run build
+
+    - name: Build AppImage
+      if: steps.sync.outputs.version
+      working-directory: ./main
+      run: |
+        python3 -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" src/windowing/layer-host.py
+        npm ci
+        # Not committed: upstream bumps the version line every release, and the
+        # repository url is what points the auto-updater at this fork.
+        npm version --no-git-tag-version '${{ steps.sync.outputs.version }}'
+        npm pkg set repository.url="https://github.com/$GITHUB_REPOSITORY.git"
+        npm run build
+        npm run package -- --linux -p never
+        # GitHub mangles spaces in asset names; the updater wants the name in the yml.
+        mv dist/*.AppImage "dist/$(sed -n 's/^path: //p' dist/latest-linux.yml)"
+        git checkout -- package.json package-lock.json
+
+    - name: Publish
+      if: steps.sync.outputs.version
+      run: |
+        version='${{ steps.sync.outputs.version }}'
+        upstream='${{ steps.sync.outputs.upstream }}'
+        git push --force-with-lease origin "HEAD:$GITHUB_REF_NAME"
+        git tag "v$version"
+        git push origin "v$version"
+        gh release create "v$version" main/dist/*.AppImage main/dist/latest-linux.yml \
+          --title "v$version" \
+          --notes "Awakened PoE Trade $upstream with the Wayland layer-shell overlay.
+
+        - Upstream release: https://github.com/SnosMe/awakened-poe-trade/releases/tag/v$upstream
+        - What this fork changes: https://github.com/$GITHUB_REPOSITORY/compare/v$upstream...v$version
+        - Setup: https://github.com/$GITHUB_REPOSITORY#install"
+
+    - name: Report failure
+      if: failure()
+      run: |
+        title='Layer-shell release failed'
+        if [ "$(gh issue list --state open --search "\"$title\" in:title" --json number --jq length)" = 0 ]; then
+          gh issue create --title "$title" \
+            --body "Rebasing onto the latest upstream release or building it failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+
+        Usually an upstream change touched a line this fork hooks into. Rebase \`$GITHUB_REF_NAME\` by hand and push."
+        fi
